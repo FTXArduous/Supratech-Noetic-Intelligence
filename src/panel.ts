@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
 export interface PanelState {
   trace: string;
@@ -46,6 +46,8 @@ export class SniPanel implements vscode.WebviewViewProvider {
         this.setLanguageEnabled(message.enabled);
       } else if (message.type === 'language-archive') {
         await this.archiveAndReset();
+      } else if (message.type === 'language-load') {
+        await this.loadArchive();
       }
     });
     this.publish();
@@ -119,6 +121,44 @@ export class SniPanel implements vscode.WebviewViewProvider {
     }
   }
 
+  private async loadArchive() {
+    if (!this.storage || !this.storageUri) return;
+    try {
+      const picked = await vscode.window.showOpenDialog({
+        defaultUri: this.storageUri,
+        canSelectMany: false,
+        filters: { 'ZIP archive': ['zip'] },
+        openLabel: 'Load archived language',
+      });
+      if (!picked?.[0]) return;
+
+      const files = unzipSync(await vscode.workspace.fs.readFile(picked[0]));
+      const raw = files['sni-language.json'];
+      if (!raw) throw new Error('sni-language.json not found in archive.');
+      const parsed = JSON.parse(strFromU8(raw)) as { entries?: unknown };
+      if (!Array.isArray(parsed.entries)) throw new Error('Archive has no entries list.');
+
+      const known = new Set(this.state.languageTerms.map((entry) => entry.term.toLocaleLowerCase()));
+      let added = 0;
+      for (const item of parsed.entries as Partial<VocabularyEntry>[]) {
+        if (this.state.languageTerms.length >= MAX_LANGUAGE_ENTRIES) break;
+        if (typeof item?.term !== 'string' || typeof item.definition !== 'string') continue;
+        const term = item.term.trim().slice(0, 40);
+        const definition = item.definition.trim().slice(0, 300);
+        if (!/^[\p{L}\p{N}_-]{2,40}$/u.test(term) || !definition || known.has(term.toLocaleLowerCase())) continue;
+        this.state.languageTerms.push({ term, definition });
+        known.add(term.toLocaleLowerCase());
+        added++;
+      }
+      await this.storage.update(LANGUAGE_KEY, this.state.languageTerms);
+      this.publish();
+      void vscode.window.showInformationMessage(`Loaded ${added} archived SNI language terms into the active language.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`SNI could not load the archive. ${message}`);
+    }
+  }
+
   private publish() {
     this.view?.webview.postMessage(this.state);
   }
@@ -139,6 +179,7 @@ button{color:var(--vscode-button-foreground);background:var(--vscode-button-back
 <div id="pay">Cashapp :: $ArduousSpec</div>
 <details open><summary>Invented language</summary>
 <div class="language-controls"><label><input id="languageEnabled" type="checkbox"> Reuse &amp; expand saved language</label><button id="archiveLanguage" type="button">Archive &amp; start fresh</button></div>
+<p><button id="loadLanguage" type="button">Load archived language</button></p>
 <p id="languageCount"></p><pre id="languageList"></pre>
 </details>
 <details open><summary>How to use SNI</summary>
@@ -156,6 +197,7 @@ document.getElementById('languageEnabled').addEventListener('change', e => vscod
 document.getElementById('archiveLanguage').addEventListener('click', () => {
   if (confirm('Save the current SNI language as a ZIP archive, then clear it and start a fresh language set?')) vscode.postMessage({type:'language-archive'});
 });
+document.getElementById('loadLanguage').addEventListener('click', () => vscode.postMessage({type:'language-load'}));
 window.addEventListener('message', e => {
   for (const k of ['english','verifier','trace','summary']) document.getElementById(k).textContent = e.data[k] || '';
   document.getElementById('languageEnabled').checked = e.data.languageEnabled;
