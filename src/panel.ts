@@ -8,6 +8,7 @@ export interface PanelState {
   summary: string;
   languageEnabled: boolean;
   languageTerms: VocabularyEntry[];
+  projectIndexStatus: string;
 }
 
 interface VocabularyEntry {
@@ -26,7 +27,7 @@ export class SniPanel implements vscode.WebviewViewProvider {
   private storage: vscode.Memento | undefined;
   private storageUri: vscode.Uri | undefined;
   private state: PanelState = {
-    trace: '', english: '', verifier: '', summary: '', languageEnabled: true, languageTerms: [],
+    trace: '', english: '', verifier: '', summary: '', languageEnabled: true, languageTerms: [], projectIndexStatus: 'No project index loaded (session only).',
   };
 
   initialize(storage: vscode.Memento, storageUri: vscode.Uri) {
@@ -48,6 +49,10 @@ export class SniPanel implements vscode.WebviewViewProvider {
         await this.archiveAndReset();
       } else if (message.type === 'language-load') {
         await this.loadArchive();
+      } else if (message.type === 'project-index-load') {
+        await vscode.commands.executeCommand('sni.loadProjectIndex');
+      } else if (message.type === 'project-index-clear') {
+        await vscode.commands.executeCommand('sni.clearProjectIndex');
       }
     });
     this.publish();
@@ -63,6 +68,10 @@ export class SniPanel implements vscode.WebviewViewProvider {
   update(patch: Partial<PanelState>) {
     this.state = { ...this.state, ...patch };
     this.publish();
+  }
+
+  setProjectIndexStatus(projectIndexStatus: string) {
+    this.update({ projectIndexStatus });
   }
 
   vocabularyForPrompt(): string {
@@ -181,6 +190,9 @@ button{color:var(--vscode-button-foreground);background:var(--vscode-button-back
 <div class="language-controls"><label><input id="languageEnabled" type="checkbox"> Reuse &amp; expand saved language</label><button id="archiveLanguage" type="button">Archive &amp; start fresh</button></div>
 <p><button id="loadLanguage" type="button">Load archived language</button></p>
 <p id="languageCount"></p><pre id="languageList"></pre>
+<hr>
+<div class="language-controls"><button id="loadProjectIndex" type="button">Load project index</button><button id="clearProjectIndex" type="button">Clear project index</button></div>
+<p id="projectIndexStatus"></p>
 </details>
 <details open><summary>How to use SNI</summary>
 <p>In Copilot Chat, send <code>@sni your prompt</code> for the default tier.</p>
@@ -198,6 +210,8 @@ document.getElementById('archiveLanguage').addEventListener('click', () => {
   if (confirm('Save the current SNI language as a ZIP archive, then clear it and start a fresh language set?')) vscode.postMessage({type:'language-archive'});
 });
 document.getElementById('loadLanguage').addEventListener('click', () => vscode.postMessage({type:'language-load'}));
+document.getElementById('loadProjectIndex').addEventListener('click', () => vscode.postMessage({type:'project-index-load'}));
+document.getElementById('clearProjectIndex').addEventListener('click', () => vscode.postMessage({type:'project-index-clear'}));
 window.addEventListener('message', e => {
   for (const k of ['english','verifier','trace','summary']) document.getElementById(k).textContent = e.data[k] || '';
   document.getElementById('languageEnabled').checked = e.data.languageEnabled;
@@ -205,6 +219,7 @@ window.addEventListener('message', e => {
   document.getElementById('archiveLanguage').disabled = entries.length === 0;
   document.getElementById('languageCount').textContent = entries.length + ' saved terms' + (e.data.languageEnabled ? ' (active)' : ' (paused)');
   document.getElementById('languageList').textContent = entries.map(item => item.term + ' :: ' + item.definition).join('\\n');
+  document.getElementById('projectIndexStatus').textContent = e.data.projectIndexStatus || 'No project index loaded (session only).';
 });
 </script></body></html>`;
 }

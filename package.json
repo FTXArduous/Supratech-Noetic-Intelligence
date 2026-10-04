@@ -42,6 +42,10 @@
           {
             "name": "anagogic",
             "description": "ANSI: progressive abstraction, then translate back"
+          },
+          {
+            "name": "invent",
+            "description": "Synthesize an invention or project prompt from recent SNI conversation and saved vocabulary"
           }
         ]
       }
