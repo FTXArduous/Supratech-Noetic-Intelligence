@@ -8,6 +8,7 @@ export interface PanelState {
   summary: string;
   languageEnabled: boolean;
   languageTerms: VocabularyEntry[];
+  activeLanguageTerms: string[];
   projectIndexStatus: string;
 }
 
@@ -19,6 +20,7 @@ interface VocabularyEntry {
 export const VIEW_ID = 'sni.view';
 const LANGUAGE_KEY = 'sni.language.v1';
 const LANGUAGE_ENABLED_KEY = 'sni.language.enabled';
+const ACTIVE_LANGUAGE_KEY = 'sni.language.active.v1';
 const MAX_LANGUAGE_ENTRIES = 500;
 
 export class SniPanel implements vscode.WebviewViewProvider {
@@ -27,7 +29,7 @@ export class SniPanel implements vscode.WebviewViewProvider {
   private storage: vscode.Memento | undefined;
   private storageUri: vscode.Uri | undefined;
   private state: PanelState = {
-    trace: '', english: '', verifier: '', summary: '', languageEnabled: true, languageTerms: [], projectIndexStatus: 'No project index loaded (session only).',
+    trace: '', english: '', verifier: '', summary: '', languageEnabled: true, languageTerms: [], activeLanguageTerms: [], projectIndexStatus: 'No project index loaded (session only).',
   };
 
   initialize(storage: vscode.Memento, storageUri: vscode.Uri) {
@@ -35,6 +37,8 @@ export class SniPanel implements vscode.WebviewViewProvider {
     this.storageUri = storageUri;
     this.state.languageEnabled = storage.get<boolean>(LANGUAGE_ENABLED_KEY, true);
     this.state.languageTerms = storage.get<VocabularyEntry[]>(LANGUAGE_KEY, []);
+    this.state.activeLanguageTerms = storage.get<string[]>(ACTIVE_LANGUAGE_KEY, [])
+      .filter((term) => this.state.languageTerms.some((entry) => entry.term === term));
   }
 
   resolveWebviewView(view: vscode.WebviewView) {
@@ -42,9 +46,13 @@ export class SniPanel implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true };
     view.webview.html = html();
     view.onDidDispose(() => (this.view = undefined));
-    view.webview.onDidReceiveMessage(async (message: { type?: string; enabled?: boolean }) => {
+    view.webview.onDidReceiveMessage(async (message: { type?: string; enabled?: boolean; terms?: unknown }) => {
       if (message.type === 'language-enabled' && typeof message.enabled === 'boolean') {
         this.setLanguageEnabled(message.enabled);
+      } else if (message.type === 'language-assign' && Array.isArray(message.terms)) {
+        this.setActiveLanguageTerms(message.terms.filter((term): term is string => typeof term === 'string'));
+      } else if (message.type === 'language-inactive') {
+        this.setActiveLanguageTerms([]);
       } else if (message.type === 'language-archive') {
         await this.archiveAndReset();
       } else if (message.type === 'language-load') {
@@ -76,7 +84,10 @@ export class SniPanel implements vscode.WebviewViewProvider {
 
   vocabularyForPrompt(): string {
     if (!this.state.languageEnabled || this.state.languageTerms.length === 0) return 'No saved SNI vocabulary is active.';
-    return this.state.languageTerms.map(({ term, definition }) => `${term} :: ${definition}`).join('\n');
+    const active = new Set(this.state.activeLanguageTerms);
+    const entries = this.state.languageTerms.filter(({ term }) => active.has(term));
+    if (entries.length === 0) return 'No saved SNI vocabulary is active.';
+    return entries.map(({ term, definition }) => `${term} :: ${definition}`).join('\n');
   }
 
   captureVocabulary(trace: string) {
@@ -104,6 +115,13 @@ export class SniPanel implements vscode.WebviewViewProvider {
     this.publish();
   }
 
+  private setActiveLanguageTerms(terms: string[]) {
+    const available = new Set(this.state.languageTerms.map(({ term }) => term));
+    this.state.activeLanguageTerms = [...new Set(terms)].filter((term) => available.has(term));
+    void this.storage?.update(ACTIVE_LANGUAGE_KEY, this.state.activeLanguageTerms);
+    this.publish();
+  }
+
   private async archiveAndReset() {
     if (this.state.languageTerms.length === 0 || !this.storage || !this.storageUri) return;
     try {
@@ -121,7 +139,9 @@ export class SniPanel implements vscode.WebviewViewProvider {
       });
       await vscode.workspace.fs.writeFile(target, archive);
       await this.storage.update(LANGUAGE_KEY, []);
+      await this.storage.update(ACTIVE_LANGUAGE_KEY, []);
       this.state.languageTerms = [];
+      this.state.activeLanguageTerms = [];
       this.publish();
       void vscode.window.showInformationMessage(`Archived ${entries.length} SNI language terms to ${target.fsPath}. New traces will start a fresh language set.`);
     } catch (error) {
@@ -161,7 +181,7 @@ export class SniPanel implements vscode.WebviewViewProvider {
       }
       await this.storage.update(LANGUAGE_KEY, this.state.languageTerms);
       this.publish();
-      void vscode.window.showInformationMessage(`Loaded ${added} archived SNI language terms into the active language.`);
+      void vscode.window.showInformationMessage(`Loaded ${added} archived terms as saved vocabulary. Choose terms under Assign saved items to activate them.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(`SNI could not load the archive. ${message}`);
@@ -187,9 +207,10 @@ button{color:var(--vscode-button-foreground);background:var(--vscode-button-back
 <body>
 <div id="pay">Cashapp :: $ArduousSpec</div>
 <details open><summary>Invented language</summary>
-<div class="language-controls"><label><input id="languageEnabled" type="checkbox"> Reuse &amp; expand saved language</label><button id="archiveLanguage" type="button">Archive &amp; start fresh</button></div>
+<div class="language-controls"><label><input id="languageEnabled" type="checkbox"> Save new terms and reuse assigned terms</label><button id="archiveLanguage" type="button">Archive &amp; start fresh</button></div>
 <p><button id="loadLanguage" type="button">Load archived language</button></p>
-<p id="languageCount"></p><pre id="languageList"></pre>
+<p id="languageCount"></p>
+<div class="language-controls"><details id="assignLanguage"><summary>Assign saved items</summary><label><input id="selectAllLanguage" type="checkbox"> Select all saved items</label><div id="savedLanguageItems"></div></details><button id="makeInactive" type="button">Make Inactive</button></div>
 <hr>
 <div class="language-controls"><button id="loadProjectIndex" type="button">Load project index</button><button id="clearProjectIndex" type="button">Clear project index</button></div>
 <p id="projectIndexStatus"></p>
@@ -210,15 +231,42 @@ document.getElementById('archiveLanguage').addEventListener('click', () => {
   if (confirm('Save the current SNI language as a ZIP archive, then clear it and start a fresh language set?')) vscode.postMessage({type:'language-archive'});
 });
 document.getElementById('loadLanguage').addEventListener('click', () => vscode.postMessage({type:'language-load'}));
+document.getElementById('makeInactive').addEventListener('click', () => vscode.postMessage({type:'language-inactive'}));
+document.getElementById('selectAllLanguage').addEventListener('change', e => {
+  const checked = e.target.checked;
+  const boxes = Array.from(document.querySelectorAll('#savedLanguageItems input[type=checkbox]'));
+  for (const box of boxes) box.checked = checked;
+  vscode.postMessage({type:'language-assign',terms:checked ? boxes.map(box => box.value) : []});
+});
+document.getElementById('savedLanguageItems').addEventListener('change', () => {
+  const boxes = Array.from(document.querySelectorAll('#savedLanguageItems input[type=checkbox]'));
+  const selected = boxes.filter(box => box.checked).map(box => box.value);
+  document.getElementById('selectAllLanguage').checked = boxes.length > 0 && selected.length === boxes.length;
+  vscode.postMessage({type:'language-assign',terms:selected});
+});
 document.getElementById('loadProjectIndex').addEventListener('click', () => vscode.postMessage({type:'project-index-load'}));
 document.getElementById('clearProjectIndex').addEventListener('click', () => vscode.postMessage({type:'project-index-clear'}));
 window.addEventListener('message', e => {
   for (const k of ['english','verifier','trace','summary']) document.getElementById(k).textContent = e.data[k] || '';
   document.getElementById('languageEnabled').checked = e.data.languageEnabled;
   const entries = e.data.languageTerms || [];
+  const activeTerms = e.data.activeLanguageTerms || [];
   document.getElementById('archiveLanguage').disabled = entries.length === 0;
-  document.getElementById('languageCount').textContent = entries.length + ' saved terms' + (e.data.languageEnabled ? ' (active)' : ' (paused)');
-  document.getElementById('languageList').textContent = entries.map(item => item.term + ' :: ' + item.definition).join('\\n');
+  document.getElementById('languageCount').textContent = entries.length + ' saved terms; ' + activeTerms.length + ' assigned' + (e.data.languageEnabled ? '' : ' (reuse paused)');
+  const list = document.getElementById('savedLanguageItems');
+  list.replaceChildren();
+  for (const item of entries) {
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = item.term;
+    box.checked = activeTerms.includes(item.term);
+    label.append(box, document.createTextNode(' ' + item.term + ' :: ' + item.definition));
+    list.append(label);
+  }
+  document.getElementById('selectAllLanguage').checked = entries.length > 0 && activeTerms.length === entries.length;
+  document.getElementById('assignLanguage').querySelector('summary').textContent = 'Assign saved items (' + activeTerms.length + ' active)';
+  document.getElementById('makeInactive').disabled = activeTerms.length === 0;
   document.getElementById('projectIndexStatus').textContent = e.data.projectIndexStatus || 'No project index loaded (session only).';
 });
 </script></body></html>`;
