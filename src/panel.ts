@@ -1,25 +1,54 @@
 import * as vscode from 'vscode';
+import { strToU8, zipSync } from 'fflate';
 
 export interface PanelState {
   trace: string;
   english: string;
   verifier: string;
   summary: string;
+  languageEnabled: boolean;
+  languageTerms: VocabularyEntry[];
+}
+
+interface VocabularyEntry {
+  term: string;
+  definition: string;
 }
 
 export const VIEW_ID = 'sni.view';
+const LANGUAGE_KEY = 'sni.language.v1';
+const LANGUAGE_ENABLED_KEY = 'sni.language.enabled';
+const MAX_LANGUAGE_ENTRIES = 500;
 
 export class SniPanel implements vscode.WebviewViewProvider {
   static readonly instance = new SniPanel();
   private view: vscode.WebviewView | undefined;
-  private state: PanelState = { trace: '', english: '', verifier: '', summary: '' };
+  private storage: vscode.Memento | undefined;
+  private storageUri: vscode.Uri | undefined;
+  private state: PanelState = {
+    trace: '', english: '', verifier: '', summary: '', languageEnabled: true, languageTerms: [],
+  };
+
+  initialize(storage: vscode.Memento, storageUri: vscode.Uri) {
+    this.storage = storage;
+    this.storageUri = storageUri;
+    this.state.languageEnabled = storage.get<boolean>(LANGUAGE_ENABLED_KEY, true);
+    this.state.languageTerms = storage.get<VocabularyEntry[]>(LANGUAGE_KEY, []);
+  }
 
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = html();
     view.onDidDispose(() => (this.view = undefined));
-    view.webview.postMessage(this.state);
+    view.webview.onDidReceiveMessage(async (message: { type?: string; enabled?: boolean }) => {
+      if (message.type === 'language-enabled' && typeof message.enabled === 'boolean') {
+        this.setLanguageEnabled(message.enabled);
+      } else if (message.type === 'language-archive') {
+        await this.archiveAndReset();
+      }
+    });
+    this.publish();
   }
 
   static show(): SniPanel {
@@ -31,6 +60,66 @@ export class SniPanel implements vscode.WebviewViewProvider {
 
   update(patch: Partial<PanelState>) {
     this.state = { ...this.state, ...patch };
+    this.publish();
+  }
+
+  vocabularyForPrompt(): string {
+    if (!this.state.languageEnabled || this.state.languageTerms.length === 0) return 'No saved SNI vocabulary is active.';
+    return this.state.languageTerms.map(({ term, definition }) => `${term} :: ${definition}`).join('\n');
+  }
+
+  captureVocabulary(trace: string) {
+    if (!this.state.languageEnabled) return;
+    const section = trace.split(/^LEXICON DELTA:\s*$/im).at(1);
+    if (!section) return;
+
+    const known = new Set(this.state.languageTerms.map((entry) => entry.term.toLocaleLowerCase()));
+    for (const line of section.split(/\r?\n/)) {
+      const match = line.match(/^\s*([\p{L}\p{N}_-]{2,40})\s*::\s*(.{1,300})\s*$/u);
+      if (!match) continue;
+      const term = match[1];
+      if (known.has(term.toLocaleLowerCase())) continue;
+      this.state.languageTerms.push({ term, definition: match[2] });
+      known.add(term.toLocaleLowerCase());
+      if (this.state.languageTerms.length >= MAX_LANGUAGE_ENTRIES) break;
+    }
+    void this.storage?.update(LANGUAGE_KEY, this.state.languageTerms);
+    this.publish();
+  }
+
+  private setLanguageEnabled(enabled: boolean) {
+    this.state.languageEnabled = enabled;
+    void this.storage?.update(LANGUAGE_ENABLED_KEY, enabled);
+    this.publish();
+  }
+
+  private async archiveAndReset() {
+    if (this.state.languageTerms.length === 0 || !this.storage || !this.storageUri) return;
+    try {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.joinPath(this.storageUri, 'sni-language-backup.zip'),
+        filters: { 'ZIP archive': ['zip'] },
+        saveLabel: 'Archive language and start fresh',
+      });
+      if (!target) return;
+
+      const entries = this.state.languageTerms;
+      const archive = zipSync({
+        'sni-language.json': strToU8(JSON.stringify({ schemaVersion: 1, archivedAt: new Date().toISOString(), entries }, null, 2)),
+        'README.txt': strToU8('SNI invented-language archive. Restore by importing sni-language.json entries into SNI language storage.'),
+      });
+      await vscode.workspace.fs.writeFile(target, archive);
+      await this.storage.update(LANGUAGE_KEY, []);
+      this.state.languageTerms = [];
+      this.publish();
+      void vscode.window.showInformationMessage(`Archived ${entries.length} SNI language terms to ${target.fsPath}. New traces will start a fresh language set.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`SNI could not archive the language; saved terms were not cleared. ${message}`);
+    }
+  }
+
+  private publish() {
     this.view?.webview.postMessage(this.state);
   }
 }
@@ -43,9 +132,15 @@ body{font-family:var(--vscode-font-family);padding:0 8px 8px}
 #pay{position:sticky;top:0;padding:6px 0;background:var(--vscode-sideBar-background);border-bottom:1px solid var(--vscode-panel-border);font-weight:bold;z-index:1}
 summary{cursor:pointer;font-weight:bold;margin:8px 0 4px}
 pre{white-space:pre-wrap;margin:0}
+button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:5px 8px;cursor:pointer}
+.language-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 </style></head>
 <body>
 <div id="pay">Cashapp :: $ArduousSpec</div>
+<details open><summary>Invented language</summary>
+<div class="language-controls"><label><input id="languageEnabled" type="checkbox"> Reuse &amp; expand saved language</label><button id="archiveLanguage" type="button">Archive &amp; start fresh</button></div>
+<p id="languageCount"></p><pre id="languageList"></pre>
+</details>
 <details open><summary>How to use SNI</summary>
 <p>In Copilot Chat, send <code>@sni your prompt</code> for the default tier.</p>
 <p>Choose a tier with <code>@sni /meta</code>, <code>@sni /hyper</code>, <code>@sni /empyrean</code>, or <code>@sni /anagogic</code>, followed by your prompt.</p>
@@ -56,8 +151,18 @@ pre{white-space:pre-wrap;margin:0}
 <details><summary>Noetic trace</summary><pre id="trace"></pre></details>
 <details open><summary>Summary</summary><pre id="summary"></pre></details>
 <script>
+const vscode = acquireVsCodeApi();
+document.getElementById('languageEnabled').addEventListener('change', e => vscode.postMessage({type:'language-enabled',enabled:e.target.checked}));
+document.getElementById('archiveLanguage').addEventListener('click', () => {
+  if (confirm('Save the current SNI language as a ZIP archive, then clear it and start a fresh language set?')) vscode.postMessage({type:'language-archive'});
+});
 window.addEventListener('message', e => {
   for (const k of ['english','verifier','trace','summary']) document.getElementById(k).textContent = e.data[k] || '';
+  document.getElementById('languageEnabled').checked = e.data.languageEnabled;
+  const entries = e.data.languageTerms || [];
+  document.getElementById('archiveLanguage').disabled = entries.length === 0;
+  document.getElementById('languageCount').textContent = entries.length + ' saved terms' + (e.data.languageEnabled ? ' (active)' : ' (paused)');
+  document.getElementById('languageList').textContent = entries.map(item => item.term + ' :: ' + item.definition).join('\\n');
 });
 </script></body></html>`;
 }

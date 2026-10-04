@@ -11,6 +11,7 @@ export const TIER_LABEL: Record<Tier, string> = {
 const BOUNDS =
   'Begin with a block starting "AXIOMS:" listing numbered rules you will obey for this entire trace, in your own notation. ' +
   'Then reason, citing axiom numbers when you rely on them. ' +
+  'Use supplied SNI vocabulary consistently when useful. At the end, add "LEXICON DELTA:" and propose one concise, genuinely useful new term for a distinction or relationship in this task; do not repeat supplied terms. Format each entry as term :: definition. Treat it as a proposed label, not a new fact. ' +
   'Stay within finite computation. Make no claims of unlimited or supernatural intelligence. ' +
   'Every step must be reducible to statements a human could check.';
 

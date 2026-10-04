@@ -48,12 +48,20 @@
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "sni", "title": "SNI", "icon": "$(symbol-event)" }
+        {
+          "id": "sni",
+          "title": "SNI",
+          "icon": "$(symbol-event)"
+        }
       ]
     },
     "views": {
       "sni": [
-        { "type": "webview", "id": "sni.view", "name": "Translation" }
+        {
+          "type": "webview",
+          "id": "sni.view",
+          "name": "Translation"
+        }
       ]
     },
     "commands": [
@@ -84,5 +92,8 @@
     "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   }
 }

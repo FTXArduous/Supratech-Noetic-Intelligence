@@ -23,6 +23,7 @@ async function ask(
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
+  SniPanel.instance.initialize(ctx.globalState, ctx.globalStorageUri);
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider(VIEW_ID, SniPanel.instance, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('sni.openPanel', () => SniPanel.show()),
@@ -37,7 +38,14 @@ export function activate(ctx: vscode.ExtensionContext) {
     const passes = Math.max(1, vscode.workspace.getConfiguration('sni').get<number>('maxVerifierPasses', 1));
 
     stream.progress(`${TIER_LABEL[tier]}: reasoning`);
-    const trace = await ask(model, TIER_PROMPT[tier], request.prompt, token, (t) => panel.update({ trace: t }));
+    const trace = await ask(
+      model,
+      TIER_PROMPT[tier],
+      `ACTIVE SNI VOCABULARY (reuse consistently when useful):\n${panel.vocabularyForPrompt()}\n\nREQUEST:\n${request.prompt}`,
+      token,
+      (t) => panel.update({ trace: t }),
+    );
+    panel.captureVocabulary(trace);
 
     let english = '';
     let verdict = '';
