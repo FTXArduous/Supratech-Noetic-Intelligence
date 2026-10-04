@@ -1,0 +1,88 @@
+{
+  "name": "sni-copilot",
+  "displayName": "Supratech Noetic Intelligence (SNI)",
+  "description": "Staged reasoning tiers (MTSI, HNSI, ENSI, ANSI) with a hardcoded English translator, live verifier, and side panel.",
+  "version": "0.0.1",
+  "publisher": "sni",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FTXArduous/Supratech-Noetic-Intelligence"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "sni.chat",
+        "name": "sni",
+        "fullName": "Supratech Noetic Intelligence",
+        "description": "Tiered reasoning with live English translation and verification",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "meta",
+            "description": "MTSI: reasoning about reasoning"
+          },
+          {
+            "name": "hyper",
+            "description": "HNSI: many-variable relational reasoning"
+          },
+          {
+            "name": "empyrean",
+            "description": "ENSI: deep abstraction hierarchies"
+          },
+          {
+            "name": "anagogic",
+            "description": "ANSI: progressive abstraction, then translate back"
+          }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "sni", "title": "SNI", "icon": "$(symbol-event)" }
+      ]
+    },
+    "views": {
+      "sni": [
+        { "type": "webview", "id": "sni.view", "name": "Translation" }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sni.openPanel",
+        "title": "SNI: Open Translation Panel"
+      }
+    ],
+    "configuration": {
+      "title": "SNI",
+      "properties": {
+        "sni.maxVerifierPasses": {
+          "type": "number",
+          "default": 1,
+          "description": "Max translate/verify repair passes (finite computation bound)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository",
+    "install-local": "npm run compile && vsce package --out sni-local.vsix && code --install-extension sni-local.vsix --force"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.5.0"
+  }
+}
